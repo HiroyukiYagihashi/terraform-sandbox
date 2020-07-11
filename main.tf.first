@@ -1,0 +1,87 @@
+// variable: コマンド実行時に`-var`で書き換え可能
+// 環境変数で上書きも可
+variable "instance_type" {
+  default = "t3.micro"
+}
+
+variable "env" {}
+
+// local: コマンド実行時に上書き不可
+locals {
+  updated_instance_type = "t3.micro"
+}
+
+// プロバイダー: AWSやGCP等のAPIの違いを吸収
+provider "aws" {
+  region = "ap-northeast-1"
+}
+
+// データソース: 外部データを参照できる
+// 今回の場合は最新のAmazon Linux2を取得している
+data "aws_ami" "recent_amazon_linux_2" {
+  most_recent = true
+  owners = ["amazon"]
+
+  filter {
+    name = "name"
+    values = ["amzn2-ami-hvm-2.0.????????-x86_64-gp2"]
+  }
+
+  filter {
+    name = "state"
+    values = ["available"]
+  }
+}
+
+// テンプレート: 実行時に値を埋め込む機能
+data "template_file" "http_user_data" {
+  template = file("./user_data.sh.tp1")
+
+  // テンプレートの変数に値を代入
+  vars = {
+    package = "httpd"
+  }
+}
+
+// ec2
+resource "aws_instance" "example" {
+  //  ami = "ami-0f9ae750e8274075b"
+  ami = data.aws_ami.recent_amazon_linux_2.image_id
+
+  // instance_type = var.instance_type
+  // tf apply -var 'env=prod'で渡す
+  instance_type = var.env == "prod" ? local.updated_instance_type : "t2.micro" // 三項演算子を使用可能
+
+  // type.name.attributeの形で書けばリソースを参照できる
+  vpc_security_group_ids = [aws_security_group.example_ec2.id]
+
+  // テンプレートに変数を埋め込んだ結果の読み込み
+  user_data = data.template_file.http_user_data.rendered
+}
+
+// security group
+resource "aws_security_group" "example_ec2" {
+  name = "example-ec2"
+
+  ingress {
+    from_port = 80
+    to_port = 80
+    protocol = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+output "example_instance_id" {
+  value = aws_instance.example.id
+}
+
+output "example_public_dns" {
+  value = aws_instance.example.public_dns
+}
